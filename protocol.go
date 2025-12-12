@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync/atomic"
+	"crypto/rand"
 )
 
 const (
@@ -15,6 +17,8 @@ const (
 type PgServer struct {
 	listener net.Listener
 }
+
+var connectionCounter atomic.Uint32
 
 func NewPgServer(addr string) (*PgServer, error) {
 	listener, err := net.Listen("tcp", addr)
@@ -42,10 +46,19 @@ func (s *PgServer) Serve() error {
 	}
 }
 
+func generateSecret() uint32 {
+    var secret uint32
+    binary.Read(rand.Reader, binary.BigEndian, &secret)
+    return secret
+}
+
 func (s *PgServer) handleConnection(conn net.Conn) {
 	defer conn.Close()
 
-	if err := s.handleStartup(conn); err != nil {
+	pid := connectionCounter.Add(1)
+	secret := generateSecret()
+
+	if err := s.handleStartup(conn, pid, secret); err != nil {
 		s.sendError(conn, err.Error())
 		return
 	}
@@ -71,7 +84,7 @@ func (s *PgServer) handleConnection(conn net.Conn) {
 	}
 }
 
-func (s *PgServer) handleStartup(conn net.Conn) error {
+func (s *PgServer) handleStartup(conn net.Conn, pid, secret uint32) error {
 	for {
 		lengthBuf := make([]byte, 4)
 		if _, err := io.ReadFull(conn, lengthBuf); err != nil {
@@ -116,7 +129,7 @@ func (s *PgServer) handleStartup(conn net.Conn) error {
 		return err
 	}
 
-	if err := s.sendBackendKeyData(conn, 1234, 5678); err != nil {
+	if err := s.sendBackendKeyData(conn, pid, secret); err != nil {
 		return err
 	}
 
@@ -231,12 +244,12 @@ func (s *PgServer) sendParameterStatus(conn net.Conn, name, value string) error 
 	return err
 }
 
-func (s *PgServer) sendBackendKeyData(conn net.Conn, pid, secretKey int32) error {
+func (s *PgServer) sendBackendKeyData(conn net.Conn, pid, secret uint32) error {
 	msg := make([]byte, 13)
 	msg[0] = 'K'
 	binary.BigEndian.PutUint32(msg[1:5], 12)
-	binary.BigEndian.PutUint32(msg[5:9], uint32(pid))
-	binary.BigEndian.PutUint32(msg[9:13], uint32(secretKey))
+	binary.BigEndian.PutUint32(msg[5:9], pid)
+	binary.BigEndian.PutUint32(msg[9:13], secret)
 	_, err := conn.Write(msg)
 	return err
 }

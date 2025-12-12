@@ -4,18 +4,6 @@ import (
 	"fmt"
 )
 
-func parse(input string) (*SelectStmt, error) {
-	l := newLexer(input)
-	yyParse(l)
-	if l.result == nil {
-		return nil, fmt.Errorf("no result (input may be invalid)")
-	}
-	if stmt, ok := l.result.(*SelectStmt); ok {
-		return stmt, nil
-	}
-	return nil, fmt.Errorf("expected SELECT statement")
-}
-
 func parseStmt(input string) (Stmt, error) {
 	l := newLexer(input)
 	yyParse(l)

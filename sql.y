@@ -72,6 +72,10 @@ stmt
         // Save the parse result on the lexer for retrieval in main.go
         yylex.(*lexer).result = &SelectStmt{Columns: $2, Table: $4}
     }
+    | SELECT select_list
+    {
+        yylex.(*lexer).result = &SelectStmt{Columns: $2, Table: ""}
+    }
     | CREATE TABLE ident LPAREN column_def_list RPAREN
     {
         yylex.(*lexer).result = &CreateTableStmt{Table: $3, Columns: $5}

@@ -185,7 +185,25 @@ func (s *PgServer) handleQuery(conn net.Conn, payload []byte) {
 
 	_ = stmt
 
-	// TODO: execute the statement
+	// Test
+    if _, ok := stmt.(*SelectStmt); ok {
+        fields := []FieldDescription{
+            {
+                Name:       "?column?",  // or the actual column name/alias
+                TypeOID:    23,          // 23 = int4, 25 = text, 701 = float8
+                TypeSize:   4,           // size in bytes (-1 for variable)
+                TypeMod:    -1,
+                FormatCode: 0,           // 0 = text format
+            },
+        }
+        s.sendRowDescription(conn, fields)
+
+        s.sendDataRow(conn, []string{"100"})
+
+        s.sendCommandComplete(conn, "SELECT 1")
+        s.sendReadyForQuery(conn, 'I')
+        return
+    }
 
 	s.sendCommandComplete(conn, "OK")
 	s.sendReadyForQuery(conn, 'I')
@@ -233,6 +251,96 @@ func (s *PgServer) sendCommandComplete(conn net.Conn, tag string) error {
 	payload := append([]byte(tag), 0)
 	msg := make([]byte, 1+4+len(payload))
 	msg[0] = 'C'
+	binary.BigEndian.PutUint32(msg[1:5], uint32(4+len(payload)))
+	copy(msg[5:], payload)
+	_, err := conn.Write(msg)
+	return err
+}
+
+type FieldDescription struct {
+	Name         string
+	TableOID     int32
+	ColumnAttrNo int16
+	TypeOID      int32
+	TypeSize     int16
+	TypeMod      int32
+	FormatCode   int16
+}
+
+func (s *PgServer) sendRowDescription(conn net.Conn, fields []FieldDescription) error {
+	var payload []byte
+
+	// Number of fields
+	fieldCount := make([]byte, 2)
+	binary.BigEndian.PutUint16(fieldCount, uint16(len(fields)))
+	payload = append(payload, fieldCount...)
+
+	// Each field
+	for _, field := range fields {
+		// Field name (null-terminated string)
+		payload = append(payload, []byte(field.Name)...)
+		payload = append(payload, 0)
+
+		// Table OID (4 bytes)
+		tableOID := make([]byte, 4)
+		binary.BigEndian.PutUint32(tableOID, uint32(field.TableOID))
+		payload = append(payload, tableOID...)
+
+		// Column attribute number (2 bytes)
+		attrNo := make([]byte, 2)
+		binary.BigEndian.PutUint16(attrNo, uint16(field.ColumnAttrNo))
+		payload = append(payload, attrNo...)
+
+		// Type OID (4 bytes)
+		typeOID := make([]byte, 4)
+		binary.BigEndian.PutUint32(typeOID, uint32(field.TypeOID))
+		payload = append(payload, typeOID...)
+
+		// Type size (2 bytes)
+		typeSize := make([]byte, 2)
+		binary.BigEndian.PutUint16(typeSize, uint16(field.TypeSize))
+		payload = append(payload, typeSize...)
+
+		// Type modifier (4 bytes)
+		typeMod := make([]byte, 4)
+		binary.BigEndian.PutUint32(typeMod, uint32(field.TypeMod))
+		payload = append(payload, typeMod...)
+
+		// Format code (2 bytes) - 0 for text, 1 for binary
+		formatCode := make([]byte, 2)
+		binary.BigEndian.PutUint16(formatCode, uint16(field.FormatCode))
+		payload = append(payload, formatCode...)
+	}
+
+	msg := make([]byte, 1+4+len(payload))
+	msg[0] = 'T'
+	binary.BigEndian.PutUint32(msg[1:5], uint32(4+len(payload)))
+	copy(msg[5:], payload)
+	_, err := conn.Write(msg)
+	return err
+}
+
+func (s *PgServer) sendDataRow(conn net.Conn, values []string) error {
+	var payload []byte
+
+	// Number of columns
+	colCount := make([]byte, 2)
+	binary.BigEndian.PutUint16(colCount, uint16(len(values)))
+	payload = append(payload, colCount...)
+
+	// Each column value
+	for _, value := range values {
+		// Length of value (4 bytes) - -1 for NULL
+		length := make([]byte, 4)
+		binary.BigEndian.PutUint32(length, uint32(len(value)))
+		payload = append(payload, length...)
+
+		// Value (no null terminator for DataRow)
+		payload = append(payload, []byte(value)...)
+	}
+
+	msg := make([]byte, 1+4+len(payload))
+	msg[0] = 'D'
 	binary.BigEndian.PutUint32(msg[1:5], uint32(4+len(payload)))
 	copy(msg[5:], payload)
 	_, err := conn.Write(msg)

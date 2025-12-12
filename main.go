@@ -184,4 +184,14 @@ func main() {
 	} else {
 		fmt.Println(result)
 	}
+
+	server, err := NewPgServer(":5432")
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("PostgreSQL wire protocol server listening on %s\n", server.Addr())
+	fmt.Println("Connect with: psql -h localhost -p 5432 -U test")
+	if err := server.Serve(); err != nil {
+		panic(err)
+	}
 }

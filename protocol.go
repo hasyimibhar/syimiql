@@ -175,9 +175,17 @@ func (s *PgServer) readMessage(conn net.Conn) (byte, []byte, error) {
 
 func (s *PgServer) handleQuery(conn net.Conn, payload []byte) {
 	query := string(payload[:len(payload)-1])
-	_ = query
 
-	// TODO: implement this
+	stmt, err := parseStmt(query)
+	if err != nil {
+		s.sendError(conn, "syntax error")
+		s.sendReadyForQuery(conn, 'I')
+		return
+	}
+
+	_ = stmt
+
+	// TODO: execute the statement
 
 	s.sendCommandComplete(conn, "OK")
 	s.sendReadyForQuery(conn, 'I')
@@ -231,13 +239,63 @@ func (s *PgServer) sendCommandComplete(conn net.Conn, tag string) error {
 	return err
 }
 
+type ErrorDetail struct {
+	Severity string
+	Code     string
+	Message  string
+	Detail   string
+	Hint     string
+	Position int
+}
+
 func (s *PgServer) sendError(conn net.Conn, message string) error {
-	payload := []byte{'S'}
-	payload = append(payload, []byte("ERROR")...)
+	return s.sendErrorDetail(conn, ErrorDetail{
+		Severity: "ERROR",
+		Code:     "42000", // syntax_error_or_access_rule_violation
+		Message:  message,
+	})
+}
+
+func (s *PgServer) sendErrorDetail(conn net.Conn, detail ErrorDetail) error {
+	var payload []byte
+
+	// Severity
+	payload = append(payload, 'S')
+	payload = append(payload, []byte(detail.Severity)...)
 	payload = append(payload, 0)
+
+	// SQLSTATE code
+	payload = append(payload, 'C')
+	payload = append(payload, []byte(detail.Code)...)
+	payload = append(payload, 0)
+
+	// Message
 	payload = append(payload, 'M')
-	payload = append(payload, []byte(message)...)
+	payload = append(payload, []byte(detail.Message)...)
 	payload = append(payload, 0)
+
+	// Detail (optional)
+	if detail.Detail != "" {
+		payload = append(payload, 'D')
+		payload = append(payload, []byte(detail.Detail)...)
+		payload = append(payload, 0)
+	}
+
+	// Hint (optional)
+	if detail.Hint != "" {
+		payload = append(payload, 'H')
+		payload = append(payload, []byte(detail.Hint)...)
+		payload = append(payload, 0)
+	}
+
+	// Position (optional)
+	if detail.Position > 0 {
+		payload = append(payload, 'P')
+		payload = append(payload, []byte(fmt.Sprintf("%d", detail.Position))...)
+		payload = append(payload, 0)
+	}
+
+	// Terminator
 	payload = append(payload, 0)
 
 	msg := make([]byte, 1+4+len(payload))
